@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CardLink 管理后台</title>
+<style>
+  :root {
+    --primary: #2563eb;
+    --danger: #dc2626;
+    --warn: #d97706;
+    --border: #e5e7eb;
+    --bg: #f6f7f9;
+    --text: #1f2937;
+    --muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    font-size: 14px; line-height: 1.6;
+  }
+  header {
+    background: #fff; border-bottom: 1px solid var(--border);
+    padding: 12px 20px; display: flex; align-items: center; gap: 12px;
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .who { color: var(--muted); font-size: 13px; }
+  header .spacer { flex: 1; }
+  main { max-width: 1080px; margin: 0 auto; padding: 20px; }
+  .card {
+    background: #fff; border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 20px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 12px; font-weight: 600; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input, select {
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 14px; background: #fff; color: var(--text); min-width: 0;
+  }
+  input:focus, select:focus { outline: 2px solid rgba(37,99,235,.25); border-color: var(--primary); }
+  button {
+    padding: 7px 14px; border: 1px solid var(--border); border-radius: 6px;
+    background: #fff; color: var(--text); font-size: 14px; cursor: pointer; white-space: nowrap;
+  }
+  button:hover { border-color: var(--primary); color: var(--primary); }
+  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  button.primary:hover { opacity: .9; }
+  button.danger { color: var(--danger); }
+  button.danger:hover { border-color: var(--danger); }
+  button.small { padding: 3px 9px; font-size: 12.5px; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th { color: var(--muted); font-weight: 500; font-size: 13px; white-space: nowrap; }
+  td { font-size: 13.5px; }
+  .table-wrap { overflow-x: auto; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .badge {
+    display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; white-space: nowrap;
+  }
+  .badge.active    { background: #dcfce7; color: #15803d; }
+  .badge.suspended { background: #fef3c7; color: #b45309; }
+  .badge.revoked   { background: #f3f4f6; color: #6b7280; }
+  .exp-ok   { color: var(--text); }
+  .exp-soon { color: var(--warn); font-weight: 600; }
+  .exp-over { color: var(--danger); font-weight: 600; }
+  .muted { color: var(--muted); }
+  .secret-box {
+    background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px;
+    padding: 14px 16px; margin-top: 12px;
+  }
+  .secret-box .warn-text { color: #b45309; font-weight: 600; margin-bottom: 8px; }
+  .secret-line { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+  .secret-line code {
+    background: #fff; border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 8px; word-break: break-all; font-size: 12.5px;
+  }
+  /* toast */
+  #toasts { position: fixed; top: 64px; right: 16px; z-index: 100; display: flex; flex-direction: column; gap: 8px; }
+  .toast {
+    background: #111827; color: #fff; padding: 9px 16px; border-radius: 6px;
+    font-size: 13.5px; box-shadow: 0 4px 12px rgba(0,0,0,.18); max-width: 320px;
+    animation: fadein .15s ease-out;
+  }
+  .toast.error { background: var(--danger); }
+  .toast.ok { background: #15803d; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; } }
+  /* modal */
+  #modal-mask {
+    position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 50;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  #modal-mask.show { display: flex; }
+  #modal {
+    background: #fff; border-radius: 10px; padding: 20px; width: 100%; max-width: 400px;
+  }
+  #modal h3 { margin: 0 0 10px; font-size: 15px; }
+  #modal .modal-body { margin-bottom: 16px; }
+  #modal input { width: 100%; }
+  #modal .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .login-box { max-width: 420px; margin: 60px auto; }
+  .hidden { display: none !important; }
+  .actions-cell { white-space: nowrap; }
+  .actions-cell button { margin: 2px 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>CardLink 管理后台</h1>
+  <span class="who hidden" id="whoami"></span>
+  <span class="spacer"></span>
+  <button id="btn-logout" class="hidden">退出</button>
+</header>
+
+<main id="app">
+
+  <!-- 登录 -->
+  <div id="view-login" class="card login-box">
+    <h2>输入密钥进入</h2>
+    <p class="muted">支持两种密钥：项目管理密钥（X-Admin-Key）进入授权管理；MASTER_KEY 进入项目管理。</p>
+    <div class="row">
+      <input type="password" id="input-key" placeholder="粘贴密钥" style="flex:1">
+      <button class="primary" id="btn-login">进入</button>
+    </div>
+  </div>
+
+  <!-- MASTER_KEY：项目管理 -->
+  <div id="view-master" class="hidden">
+    <div class="card">
+      <h2>创建项目</h2>
+      <div class="row">
+        <input id="proj-name" placeholder="项目名（必填）" style="flex:1;min-width:140px">
+        <input id="proj-callback" placeholder="callback_url（可选，接收 webhook）" style="flex:2;min-width:200px">
+        <button class="primary" id="btn-create-proj">创建</button>
+      </div>
+      <div id="proj-secret" class="secret-box hidden"></div>
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">项目列表</h2>
+        <button class="small" id="btn-refresh-proj">刷新</button>
+      </div>
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <thead><tr><th>ID</th><th>名称</th><th>callback_url</th><th>创建时间</th></tr></thead>
+          <tbody id="proj-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- X-Admin-Key：卡号管理 -->
+  <div id="view-admin" class="hidden">
+    <div class="card">
+      <h2>添加客户授权</h2>
+      <div class="row">
+        <input id="gen-account" placeholder="交易账号（纯数字 4~32 位）" style="width:220px" inputmode="numeric">
+        <input id="gen-days" type="number" min="1" value="30" style="width:110px" title="授权天数">
+        <input id="gen-plan" placeholder="plan_code（可选）" style="width:130px">
+        <input id="gen-remark" placeholder="备注（如客户名）" style="flex:1;min-width:120px">
+        <button class="primary" id="btn-generate">添加</button>
+      </div>
+      <div class="muted" style="margin-top:6px;font-size:12.5px">交易账号即授权标识；授权天数到期后需续费</div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <h2 style="margin:0;flex:1">授权列表</h2>
+        <input id="filter-search" placeholder="搜索账号" style="width:150px" inputmode="numeric">
+        <select id="filter-status">
+          <option value="">全部状态</option>
+          <option value="active">active</option>
+          <option value="suspended">suspended</option>
+          <option value="revoked">revoked</option>
+        </select>
+        <select id="filter-expiring">
+          <option value="">不限到期</option>
+          <option value="1d">1 天内到期</option>
+          <option value="3d">3 天内到期</option>
+          <option value="7d">7 天内到期</option>
+          <option value="30d">30 天内到期</option>
+        </select>
+        <button class="small" id="btn-refresh-cards">刷新</button>
+      </div>
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <thead>
+            <tr><th>交易账号</th><th>套餐</th><th>状态</th><th>到期时间</th><th>备注</th><th>操作</th></tr>
+          </thead>
+          <tbody id="card-tbody"></tbody>
+        </table>
+      </div>
+      <div class="muted" id="card-count" style="margin-top:8px;font-size:12.5px"></div>
+    </div>
+  </div>
+
+</main>
+
+<div id="toasts"></div>
+
+<!-- 通用弹窗（输入 / 确认） -->
+<div id="modal-mask">
+  <div id="modal">
+    <h3 id="modal-title"></h3>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-actions">
+      <button id="modal-cancel">取消</button>
+      <button class="primary" id="modal-ok">确定</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// ---------- 状态 ----------
+const LS_KEY = "cardlink_key";
+const LS_ROLE = "cardlink_role"; // "admin" | "master"
+let authKey = localStorage.getItem(LS_KEY) || "";
+let authRole = localStorage.getItem(LS_ROLE) || "";
+
+const $ = (id) => document.getElementById(id);
+
+// ---------- 基础工具 ----------
+function toast(msg, type) {
+  const el = document.createElement("div");
+  el.className = "toast" + (type ? " " + type : "");
+  el.textContent = msg;
+  $("toasts").appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+
+function copyText(text) {
+  const done = () => toast("已复制", "ok");
+  if (navigator.clipboard && window.isSecureContext !== false) {
+    navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); done(); } catch (e) { toast("复制失败，请手动复制", "error"); }
+  ta.remove();
+}
+
+// 复制按钮元素
+function copyBtn(text) {
+  const b = document.createElement("button");
+  b.className = "small";
+  b.textContent = "复制";
+  b.onclick = () => copyText(text);
+  return b;
+}
+
+// 通用弹窗：opts = {title, html, inputValue?, danger?} → Promise<string|true|null>
+function openModal(opts) {
+  return new Promise((resolve) => {
+    const mask = $("modal-mask");
+    $("modal-title").textContent = opts.title || "";
+    const body = $("modal-body");
+    body.innerHTML = opts.html || "";
+    let input = null;
+    if (opts.inputValue !== undefined) {
+      input = document.createElement("input");
+      input.value = opts.inputValue;
+      if (opts.inputType) input.type = opts.inputType;
+      body.appendChild(input);
+      setTimeout(() => input.focus(), 50);
+    }
+    const okBtn = $("modal-ok");
+    okBtn.className = opts.danger ? "primary danger" : "primary";
+    okBtn.style.background = opts.danger ? "var(--danger)" : "";
+    okBtn.style.borderColor = opts.danger ? "var(--danger)" : "";
+
+    mask.classList.add("show");
+    const close = (val) => {
+      mask.classList.remove("show");
+      okBtn.onclick = $("modal-cancel").onclick = mask.onclick = null;
+      resolve(val);
+    };
+    okBtn.onclick = () => close(input ? input.value : true);
+    $("modal-cancel").onclick = () => close(null);
+    mask.onclick = (e) => { if (e.target === mask) close(null); };
+  });
+}
+const confirmBox = (title, html, danger) =>
+  openModal({ title, html, danger }).then((v) => v === true);
+
+// ---------- API ----------
+async function api(path, { method = "GET", body } = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (authRole === "admin") headers["X-Admin-Key"] = authKey;
+  else if (authRole === "master") headers["X-Master-Key"] = authKey;
+  const resp = await fetch(path, {
+    method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let data = null;
+  try { data = await resp.json(); } catch (e) { /* 空响应 */ }
+  if (!resp.ok) {
+    const msg = (data && (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)))
+      || ("HTTP " + resp.status);
+    const err = new Error(msg);
+    err.status = resp.status;
+    throw err;
+  }
+  return data;
+}
+
+// ---------- 身份识别：先试项目管理密钥，再试 MASTER_KEY ----------
+async function detectRole(key) {
+  const probe = async (path, headerName) => {
+    const resp = await fetch(path, { headers: { [headerName]: key } });
+    return resp.status;
+  };
+  if (await probe("/api/cards", "X-Admin-Key") === 200) return "admin";
+  if (await probe("/api/projects", "X-Master-Key") === 200) return "master";
+  return null;
+}
+
+// ---------- 视图切换 ----------
+function showView(name) {
+  $("view-login").classList.toggle("hidden", name !== "login");
+  $("view-master").classList.toggle("hidden", name !== "master");
+  $("view-admin").classList.toggle("hidden", name !== "admin");
+  $("btn-logout").classList.toggle("hidden", name === "login");
+  $("whoami").classList.toggle("hidden", name === "login");
+  if (name === "admin") $("whoami").textContent = "项目管理密钥";
+  if (name === "master") $("whoami").textContent = "MASTER_KEY";
+}
+
+async function login(key) {
+  if (!/^[\x21-\x7e]+$/.test(key)) {
+    toast("密钥包含非法字符：请检查是否混入了中文、全角符号或多余空格", "error");
+    return;
+  }
+  const role = await detectRole(key);
+  if (!role) {
+    toast("密钥无效：既不是项目管理密钥也不是 MASTER_KEY", "error");
+    return;
+  }
+  authKey = key; authRole = role;
+  localStorage.setItem(LS_KEY, key);
+  localStorage.setItem(LS_ROLE, role);
+  if (role === "admin") { showView("admin"); loadCards(); }
+  else { showView("master"); loadProjects(); }
+  toast("已进入" + (role === "admin" ? "授权管理" : "项目管理"), "ok");
+}
+
+function logout() {
+  authKey = ""; authRole = "";
+  localStorage.removeItem(LS_KEY);
+  localStorage.removeItem(LS_ROLE);
+  showView("login");
+}
+
+// ---------- 时间格式化与到期高亮 ----------
+function fmtTime(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function expClass(iso) {
+  const ms = new Date(iso) - Date.now();
+  if (ms <= 0) return "exp-over";
+  if (ms <= 7 * 86400e3) return "exp-soon";
+  return "exp-ok";
+}
+function expText(iso) {
+  const ms = new Date(iso) - Date.now();
+  if (ms <= 0) return fmtTime(iso) + "（已过期）";
+  return fmtTime(iso);
+}
+
+// ---------- 授权管理 ----------
+let allCards = [];  // 最近一次加载的完整列表，搜索框做前端过滤
+
+async function loadCards() {
+  const params = new URLSearchParams();
+  const st = $("filter-status").value;
+  const ex = $("filter-expiring").value;
+  if (st) params.set("status", st);
+  if (ex) params.set("expiring_in", ex);
+  try {
+    const data = await api("/api/cards" + (params.size ? "?" + params : ""));
+    allCards = data.cards;
+    renderCards();
+  } catch (e) {
+    toast("加载失败：" + e.message, "error");
+    if (e.status === 403) logout();
+  }
+}
+
+function renderCards() {
+  const kw = $("filter-search").value.trim();
+  const cards = kw ? allCards.filter((c) => c.card_key.includes(kw)) : allCards;
+  $("card-count").textContent = kw ? `匹配 ${cards.length} / 共 ${allCards.length} 个` : `共 ${cards.length} 个`;
+  const tbody = $("card-tbody");
+  tbody.innerHTML = "";
+  for (const c of cards) {
+    const tr = document.createElement("tr");
+
+    // 交易账号 + 复制
+    const tdKey = document.createElement("td");
+    const keySpan = document.createElement("span");
+    keySpan.className = "mono";
+    keySpan.textContent = c.card_key;
+    tdKey.append(keySpan, " ", copyBtn(c.card_key));
+
+    const tdPlan = document.createElement("td");
+    tdPlan.textContent = c.plan_code || "-";
+
+    const tdStatus = document.createElement("td");
+    const badge = document.createElement("span");
+    badge.className = "badge " + c.status;
+    badge.textContent = c.status;
+    tdStatus.appendChild(badge);
+
+    const tdExp = document.createElement("td");
+    tdExp.className = expClass(c.expires_at);
+    tdExp.textContent = expText(c.expires_at);
+
+    // 备注（点击可改）
+    const tdRemark = document.createElement("td");
+    const remarkSpan = document.createElement("span");
+    remarkSpan.textContent = c.remark || "-";
+    remarkSpan.style.cursor = "pointer";
+    remarkSpan.title = "点击修改备注";
+    remarkSpan.onclick = () => editRemark(c);
+    tdRemark.appendChild(remarkSpan);
+
+    // 操作
+    const tdOps = document.createElement("td");
+    tdOps.className = "actions-cell";
+
+    const btnRenew = document.createElement("button");
+    btnRenew.className = "small";
+    btnRenew.textContent = "续费";
+    btnRenew.onclick = () => renewCard(c);
+    tdOps.append(btnRenew);
+
+    if (c.status === "active") {
+      const b = document.createElement("button");
+      b.className = "small"; b.textContent = "暂停";
+      b.onclick = () => patchCard(c, "suspend");
+      tdOps.append(b);
+    }
+    if (c.status === "suspended") {
+      const b = document.createElement("button");
+      b.className = "small"; b.textContent = "恢复";
+      b.onclick = () => patchCard(c, "resume");
+      tdOps.append(b);
+    }
+    if (c.status !== "revoked") {
+      const b = document.createElement("button");
+      b.className = "small danger"; b.textContent = "吊销";
+      b.onclick = () => revokeCard(c);
+      tdOps.append(b);
+    }
+    if (c.status === "suspended" || c.status === "revoked") {
+      const b = document.createElement("button");
+      b.className = "small"; b.textContent = "重置";
+      b.onclick = () => resetCard(c);
+      tdOps.append(b);
+    }
+
+    tr.append(tdKey, tdPlan, tdStatus, tdExp, tdRemark, tdOps);
+    tbody.appendChild(tr);
+  }
+}
+
+async function createCard() {
+  const account = $("gen-account").value.trim();
+  const days = parseInt($("gen-days").value, 10);
+  if (!/^\d{4,32}$/.test(account)) return toast("交易账号需为 4~32 位纯数字", "error");
+  if (!days || days < 1) return toast("授权天数需 ≥ 1", "error");
+  try {
+    await api("/api/cards", {
+      method: "POST",
+      body: {
+        card_key: account, days,
+        plan_code: $("gen-plan").value.trim(),
+        remark: $("gen-remark").value.trim(),
+      },
+    });
+    toast(`账号 ${account} 授权已创建`, "ok");
+    $("gen-account").value = "";
+    loadCards();
+  } catch (e) {
+    toast("创建失败：" + e.message, "error");
+  }
+}
+
+async function renewCard(c) {
+  const v = await openModal({
+    title: "续费 " + c.card_key,
+    html: '<div class="muted" style="margin-bottom:8px">未过期从原到期顺延，已过期从现在起算。</div>',
+    inputValue: "30",
+    inputType: "number",
+  });
+  if (v === null) return;
+  const days = parseInt(v, 10);
+  if (!days || days < 1) return toast("天数需 ≥ 1", "error");
+  try {
+    const data = await api(`/api/cards/${encodeURIComponent(c.card_key)}/renew`, {
+      method: "POST", body: { days },
+    });
+    toast("已续费，新到期：" + fmtTime(data.expires_at), "ok");
+    loadCards();
+  } catch (e) {
+    toast("续费失败：" + e.message, "error");
+  }
+}
+
+async function patchCard(c, action) {
+  try {
+    await api(`/api/cards/${encodeURIComponent(c.card_key)}`, {
+      method: "PATCH", body: { action },
+    });
+    toast(action === "suspend" ? "已暂停" : "已恢复", "ok");
+    loadCards();
+  } catch (e) {
+    toast("操作失败：" + e.message, "error");
+  }
+}
+
+async function revokeCard(c) {
+  const ok = await confirmBox(
+    "吊销 " + c.card_key,
+    '<div>吊销后 resolve 将返回 <b>revoked</b>（误操作可用"重置"恢复）。确认吊销？</div>',
+    true,
+  );
+  if (!ok) return;
+  try {
+    await api(`/api/cards/${encodeURIComponent(c.card_key)}`, {
+      method: "PATCH", body: { action: "revoke" },
+    });
+    toast("已吊销", "ok");
+    loadCards();
+  } catch (e) {
+    toast("吊销失败：" + e.message, "error");
+  }
+}
+
+async function resetCard(c) {
+  const ok = await confirmBox(
+    "重置 " + c.card_key,
+    '<div>恢复为 <b>active</b> 正常状态，到期时间不变（期限用续费调整）。确认重置？</div>',
+  );
+  if (!ok) return;
+  try {
+    await api(`/api/cards/${encodeURIComponent(c.card_key)}`, {
+      method: "PATCH", body: { action: "reset" },
+    });
+    toast("已重置为 active", "ok");
+    loadCards();
+  } catch (e) {
+    toast("重置失败：" + e.message, "error");
+  }
+}
+
+async function editRemark(c) {
+  const v = await openModal({
+    title: "修改备注 " + c.card_key,
+    inputValue: c.remark || "",
+  });
+  if (v === null) return;
+  try {
+    await api(`/api/cards/${encodeURIComponent(c.card_key)}`, {
+      method: "PATCH", body: { remark: v },
+    });
+    toast("备注已更新", "ok");
+    loadCards();
+  } catch (e) {
+    toast("修改失败：" + e.message, "error");
+  }
+}
+
+// ---------- 项目管理（MASTER_KEY） ----------
+async function loadProjects() {
+  try {
+    const data = await api("/api/projects");
+    const tbody = $("proj-tbody");
+    tbody.innerHTML = "";
+    for (const p of data.projects) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${p.id}</td><td></td><td class="muted"></td><td class="muted">${fmtTime(p.created_at)}</td>`;
+      tr.children[1].textContent = p.name;
+      tr.children[2].textContent = p.callback_url || "-";
+      tbody.appendChild(tr);
+    }
+  } catch (e) {
+    toast("加载失败：" + e.message, "error");
+    if (e.status === 403) logout();
+  }
+}
+
+async function createProject() {
+  const name = $("proj-name").value.trim();
+  const callback_url = $("proj-callback").value.trim();
+  if (!name) return toast("项目名必填", "error");
+  try {
+    const p = await api("/api/projects", {
+      method: "POST",
+      body: callback_url ? { name, callback_url } : { name },
+    });
+    // 密钥只显示一次，醒目提示 + 复制按钮
+    const box = $("proj-secret");
+    box.classList.remove("hidden");
+    box.innerHTML = "";
+    const warn = document.createElement("div");
+    warn.className = "warn-text";
+    warn.textContent = "项目「" + p.name + "」已创建。以下密钥只显示这一次，请立即保存：";
+    box.appendChild(warn);
+    for (const [label, val] of [["admin_key（管理密钥）", p.admin_key], ["resolve_token（查询密钥）", p.resolve_token]]) {
+      const line = document.createElement("div");
+      line.className = "secret-line";
+      const lab = document.createElement("span");
+      lab.textContent = label + "：";
+      const code = document.createElement("code");
+      code.textContent = val;
+      line.append(lab, code, copyBtn(val));
+      box.appendChild(line);
+    }
+    $("proj-name").value = "";
+    loadProjects();
+  } catch (e) {
+    toast("创建失败：" + e.message, "error");
+  }
+}
+
+// ---------- 事件绑定与启动 ----------
+$("btn-login").onclick = () => {
+  const key = $("input-key").value.trim();
+  if (key) login(key);
+};
+$("input-key").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("btn-login").click();
+});
+$("btn-logout").onclick = logout;
+$("btn-generate").onclick = createCard;
+$("btn-refresh-cards").onclick = loadCards;
+$("filter-status").onchange = loadCards;
+$("filter-expiring").onchange = loadCards;
+$("filter-search").oninput = renderCards;
+$("btn-create-proj").onclick = createProject;
+$("btn-refresh-proj").onclick = loadProjects;
+
+// 已存密钥则直接恢复会话；失效则回登录页
+if (authKey && authRole) {
+  if (!/^[\x21-\x7e]+$/.test(authKey)) {
+    logout();
+  } else {
+  detectRole(authKey).then((role) => {
+    if (role === authRole) {
+      if (role === "admin") { showView("admin"); loadCards(); }
+      else { showView("master"); loadProjects(); }
+    } else {
+      logout();
+    }
+  }).catch(logout);
+  }
+} else {
+  showView("login");
+}
+</script>
+</body>
+</html>

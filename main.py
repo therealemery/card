@@ -6,8 +6,10 @@ cardlink-service：通用卡号授权服务。
 """
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse, RedirectResponse
 
 import config  # noqa: F401  导入即校验必填环境变量，缺失拒启
 from database import close_db, init_db
@@ -30,6 +32,20 @@ app = FastAPI(title="cardlink-service", version="1.0.0", lifespan=lifespan)
 app.include_router(projects.router)
 app.include_router(cards.router)
 app.include_router(resolve.router)
+
+
+ADMIN_HTML = Path(__file__).resolve().parent / "static" / "admin.html"
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    return RedirectResponse("/admin")
+
+
+@app.get("/admin", include_in_schema=False)
+def admin_page():
+    """内置单页管理后台（纯静态 H5，无需构建）"""
+    return FileResponse(ADMIN_HTML)
 
 
 @app.get("/healthz", include_in_schema=False)
