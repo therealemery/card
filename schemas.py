@@ -13,7 +13,6 @@ class CardCreateRequest(BaseModel):
     # card_key 即客户的交易账号：纯数字，4~32 位
     card_key: str = Field(pattern=r"^\d{4,32}$")
     days: int = Field(ge=1)
-    plan_code: str = ""
     remark: str = ""
 
 

@@ -1,10 +1,10 @@
-"""授权管理面测试：创建、列表筛选、详情、续费 GREATEST、状态机（含 reset）"""
-import re
+"""授权管理面测试：创建、列表筛选、详情、续费 GREATEST、状态机（含 reset）
+
+管理面统一走面板 admin session（conftest.admin_headers 登录）+ ?project_id=（conftest.cards_url）。
+"""
 from datetime import datetime, timedelta, timezone
 
-from tests.conftest import admin_headers, days_from_now, set_expires_at
-
-ACCOUNT_RE = re.compile(r"^\d{4,32}$")
+from tests.conftest import admin_headers, cards_url, days_from_now, set_expires_at
 
 
 def _parse(ts: str) -> datetime:
@@ -13,19 +13,18 @@ def _parse(ts: str) -> datetime:
 
 def _create(api, proj, account, days=30, **kw):
     body = {"card_key": account, "days": days, **kw}
-    return api.post("/api/cards", json=body, headers=admin_headers(proj))
+    return api.post(cards_url(proj, "/api/cards"), json=body, headers=admin_headers(proj))
 
 
 # ---------- 创建授权 ----------
 
 def test_create_ok(api, project):
     proj = project()
-    r = _create(api, proj, "88801234", days=10, plan_code="pro", remark="客户A")
+    r = _create(api, proj, "88801234", days=10, remark="客户A")
     assert r.status_code == 200, r.text
     c = r.json()["card"]
     assert c["card_key"] == "88801234"
     assert c["status"] == "active"
-    assert c["plan_code"] == "pro"
     assert c["remark"] == "客户A"
     # days 语义：到期时间 ≈ now + 10d（容忍 1 分钟误差）
     delta = _parse(c["expires_at"]) - datetime.now(timezone.utc)
@@ -54,16 +53,23 @@ def test_create_account_validation(api, project):
     assert _create(api, proj, "1234", days=30).status_code == 200
     assert _create(api, proj, "1" * 32, days=30).status_code == 200
     # 缺 card_key / days 非法
-    assert api.post("/api/cards", json={"days": 30}, headers=admin_headers(proj)).status_code == 422
+    assert api.post(
+        cards_url(proj, "/api/cards"), json={"days": 30}, headers=admin_headers(proj)
+    ).status_code == 422
     assert _create(api, proj, "88801234", days=0).status_code == 422
 
 
-def test_create_requires_admin_key(api, project):
-    assert api.post("/api/cards", json={"card_key": "88801234", "days": 1}).status_code == 403
+def test_create_requires_session(api, project):
+    """无凭证 403；已废弃的 X-Admin-Key 路径同样 403"""
+    proj = project()
     assert api.post(
-        "/api/cards", json={"card_key": "88801234", "days": 1},
-        headers={"X-Admin-Key": "wrong"},
+        cards_url(proj, "/api/cards"), json={"card_key": "88801234", "days": 1}
     ).status_code == 403
+    r = api.post(
+        cards_url(proj, "/api/cards"), json={"card_key": "88801234", "days": 1},
+        headers={"X-Admin-Key": "whatever"},
+    )
+    assert r.status_code == 403
 
 
 # ---------- 列表筛选 ----------
@@ -74,14 +80,14 @@ def test_list_filter_status(api, project):
     for acc in ("10000001", "10000002", "10000003"):
         assert _create(api, proj, acc, days=5).status_code == 200
 
-    api.patch("/api/cards/10000001", json={"action": "suspend"}, headers=h)
-    api.patch("/api/cards/10000002", json={"action": "revoke"}, headers=h)
+    api.patch(cards_url(proj, "/api/cards/10000001"), json={"action": "suspend"}, headers=h)
+    api.patch(cards_url(proj, "/api/cards/10000002"), json={"action": "revoke"}, headers=h)
 
-    assert api.get("/api/cards", headers=h).json()["count"] == 3
-    assert api.get("/api/cards?status=active", headers=h).json()["count"] == 1
-    assert api.get("/api/cards?status=suspended", headers=h).json()["count"] == 1
-    assert api.get("/api/cards?status=revoked", headers=h).json()["count"] == 1
-    assert api.get("/api/cards?status=bogus", headers=h).status_code == 422
+    assert api.get(cards_url(proj, "/api/cards"), headers=h).json()["count"] == 3
+    assert api.get(cards_url(proj, "/api/cards?status=active"), headers=h).json()["count"] == 1
+    assert api.get(cards_url(proj, "/api/cards?status=suspended"), headers=h).json()["count"] == 1
+    assert api.get(cards_url(proj, "/api/cards?status=revoked"), headers=h).json()["count"] == 1
+    assert api.get(cards_url(proj, "/api/cards?status=bogus"), headers=h).status_code == 422
 
 
 def test_list_filter_expiring_in(api, project):
@@ -94,40 +100,45 @@ def test_list_filter_expiring_in(api, project):
     set_expires_at("20000001", days_from_now(3))
     set_expires_at("20000002", days_from_now(-1))
 
-    r = api.get("/api/cards?expiring_in=7d", headers=h)
+    r = api.get(cards_url(proj, "/api/cards?expiring_in=7d"), headers=h)
     assert r.status_code == 200
     keys = [c["card_key"] for c in r.json()["cards"]]
     # 只含临期未过期的；已过期的不算 expiring
     assert keys == ["20000001"]
 
-    assert api.get("/api/cards?expiring_in=abc", headers=h).status_code == 400
+    assert api.get(cards_url(proj, "/api/cards?expiring_in=abc"), headers=h).status_code == 400
 
 
 def test_list_isolated_between_projects(api, project):
     p1, p2 = project(name="iso1"), project(name="iso2")
+    h = admin_headers()
     _create(api, p1, "30000001", days=1)
     _create(api, p1, "30000002", days=1)
     _create(api, p2, "30000003", days=1)
-    assert api.get("/api/cards", headers=admin_headers(p1)).json()["count"] == 2
-    assert api.get("/api/cards", headers=admin_headers(p2)).json()["count"] == 1
+    # 同一 session 按 project_id 分别看各项目的授权
+    assert api.get(cards_url(p1, "/api/cards"), headers=h).json()["count"] == 2
+    assert api.get(cards_url(p2, "/api/cards"), headers=h).json()["count"] == 1
 
 
 # ---------- 详情 ----------
 
 def test_detail(api, project_with_card):
     proj, card = project_with_card
-    r = api.get(f"/api/cards/{card['card_key']}", headers=admin_headers(proj))
+    r = api.get(cards_url(proj, f"/api/cards/{card['card_key']}"), headers=admin_headers())
     assert r.status_code == 200
     assert r.json()["card"]["card_key"] == card["card_key"]
 
 
 def test_detail_not_found_and_cross_project(api, project):
     p1, p2 = project(name="d1"), project(name="d2")
+    h = admin_headers()
     card = _create(api, p1, "40000001", days=1).json()["card"]
     # 不存在
-    assert api.get("/api/cards/49999999", headers=admin_headers(p1)).status_code == 404
+    assert api.get(cards_url(p1, "/api/cards/49999999"), headers=h).status_code == 404
     # 跨项目不可见
-    assert api.get(f"/api/cards/{card['card_key']}", headers=admin_headers(p2)).status_code == 404
+    assert api.get(
+        cards_url(p2, f"/api/cards/{card['card_key']}"), headers=h
+    ).status_code == 404
 
 
 # ---------- 续费（GREATEST 语义） ----------
@@ -137,7 +148,8 @@ def test_renew_active_extends_from_expiry(api, project_with_card):
     proj, card = project_with_card
     old_expires = _parse(card["expires_at"])
 
-    r = api.post(f"/api/cards/{card['card_key']}/renew", json={"days": 10}, headers=admin_headers(proj))
+    r = api.post(cards_url(proj, f"/api/cards/{card['card_key']}/renew"),
+                 json={"days": 10}, headers=admin_headers())
     assert r.status_code == 200, r.text
     new_expires = _parse(r.json()["expires_at"])
     # 新到期 ≈ 原到期 + 10 天（容忍 1 秒）
@@ -149,7 +161,8 @@ def test_renew_expired_extends_from_now(api, project_with_card):
     proj, card = project_with_card
     set_expires_at(card["card_key"], days_from_now(-5))
 
-    r = api.post(f"/api/cards/{card['card_key']}/renew", json={"days": 10}, headers=admin_headers(proj))
+    r = api.post(cards_url(proj, f"/api/cards/{card['card_key']}/renew"),
+                 json={"days": 10}, headers=admin_headers())
     assert r.status_code == 200
     new_expires = _parse(r.json()["expires_at"])
     delta = new_expires - datetime.now(timezone.utc)
@@ -159,14 +172,16 @@ def test_renew_expired_extends_from_now(api, project_with_card):
 
 def test_renew_not_found(api, project):
     proj = project()
-    r = api.post("/api/cards/49999999/renew", json={"days": 1}, headers=admin_headers(proj))
+    r = api.post(cards_url(proj, "/api/cards/49999999/renew"),
+                 json={"days": 1}, headers=admin_headers())
     assert r.status_code == 404
 
 
 def test_renew_validation(api, project_with_card):
     proj, card = project_with_card
     assert api.post(
-        f"/api/cards/{card['card_key']}/renew", json={"days": 0}, headers=admin_headers(proj)
+        cards_url(proj, f"/api/cards/{card['card_key']}/renew"),
+        json={"days": 0}, headers=admin_headers(),
     ).status_code == 422
 
 
@@ -174,47 +189,49 @@ def test_renew_validation(api, project_with_card):
 
 def test_status_transitions_legal(api, project_with_card):
     proj, card = project_with_card
-    h = admin_headers(proj)
+    h = admin_headers()
     key = card["card_key"]
 
     # active → suspended
-    r = api.patch(f"/api/cards/{key}", json={"action": "suspend"}, headers=h)
+    r = api.patch(cards_url(proj, f"/api/cards/{key}"), json={"action": "suspend"}, headers=h)
     assert r.status_code == 200 and r.json()["card"]["status"] == "suspended"
     # suspended → active
-    r = api.patch(f"/api/cards/{key}", json={"action": "resume"}, headers=h)
+    r = api.patch(cards_url(proj, f"/api/cards/{key}"), json={"action": "resume"}, headers=h)
     assert r.status_code == 200 and r.json()["card"]["status"] == "active"
     # active → revoked
-    r = api.patch(f"/api/cards/{key}", json={"action": "revoke"}, headers=h)
+    r = api.patch(cards_url(proj, f"/api/cards/{key}"), json={"action": "revoke"}, headers=h)
     assert r.status_code == 200 and r.json()["card"]["status"] == "revoked"
     # suspended → revoked 也合法
     _create(api, proj, "50000001", days=1)
-    api.patch("/api/cards/50000001", json={"action": "suspend"}, headers=h)
-    r = api.patch("/api/cards/50000001", json={"action": "revoke"}, headers=h)
+    api.patch(cards_url(proj, "/api/cards/50000001"), json={"action": "suspend"}, headers=h)
+    r = api.patch(cards_url(proj, "/api/cards/50000001"), json={"action": "revoke"}, headers=h)
     assert r.status_code == 200 and r.json()["card"]["status"] == "revoked"
 
 
 def test_status_transitions_illegal(api, project_with_card):
     proj, card = project_with_card
-    h = admin_headers(proj)
+    h = admin_headers()
     key = card["card_key"]
 
     # active 不能 resume
-    r = api.patch(f"/api/cards/{key}", json={"action": "resume"}, headers=h)
+    r = api.patch(cards_url(proj, f"/api/cards/{key}"), json={"action": "resume"}, headers=h)
     assert r.status_code == 409
     # suspended 不能再次 suspend
-    api.patch(f"/api/cards/{key}", json={"action": "suspend"}, headers=h)
-    r = api.patch(f"/api/cards/{key}", json={"action": "suspend"}, headers=h)
+    api.patch(cards_url(proj, f"/api/cards/{key}"), json={"action": "suspend"}, headers=h)
+    r = api.patch(cards_url(proj, f"/api/cards/{key}"), json={"action": "suspend"}, headers=h)
     assert r.status_code == 409
     # 未知 action
-    assert api.patch(f"/api/cards/{key}", json={"action": "explode"}, headers=h).status_code == 422
+    assert api.patch(
+        cards_url(proj, f"/api/cards/{key}"), json={"action": "explode"}, headers=h
+    ).status_code == 422
 
 
 def test_patch_updates_remark(api, project_with_card):
     proj, card = project_with_card
     r = api.patch(
-        f"/api/cards/{card['card_key']}",
+        cards_url(proj, f"/api/cards/{card['card_key']}"),
         json={"action": "suspend", "remark": "欠费暂停"},
-        headers=admin_headers(proj),
+        headers=admin_headers(),
     )
     assert r.status_code == 200
     assert r.json()["card"]["remark"] == "欠费暂停"
@@ -224,24 +241,28 @@ def test_patch_updates_remark(api, project_with_card):
 
 def test_patch_remark_only(api, project_with_card):
     proj, card = project_with_card
-    h = admin_headers(proj)
-    r = api.patch(f"/api/cards/{card['card_key']}", json={"remark": "仅改备注"}, headers=h)
+    h = admin_headers()
+    r = api.patch(
+        cards_url(proj, f"/api/cards/{card['card_key']}"), json={"remark": "仅改备注"}, headers=h
+    )
     assert r.status_code == 200
     assert r.json()["card"]["remark"] == "仅改备注"
     assert r.json()["card"]["status"] == "active"  # 状态不变
     # action 与 remark 都不给 → 422
-    assert api.patch(f"/api/cards/{card['card_key']}", json={}, headers=h).status_code == 422
+    assert api.patch(
+        cards_url(proj, f"/api/cards/{card['card_key']}"), json={}, headers=h
+    ).status_code == 422
 
 
 # ---------- reset：任意状态 → active，不动 expires_at ----------
 
 def test_reset_from_revoked(api, project_with_card):
     proj, card = project_with_card
-    h = admin_headers(proj)
+    h = admin_headers()
     key = card["card_key"]
-    api.patch(f"/api/cards/{key}", json={"action": "revoke"}, headers=h)
+    api.patch(cards_url(proj, f"/api/cards/{key}"), json={"action": "revoke"}, headers=h)
 
-    r = api.patch(f"/api/cards/{key}", json={"action": "reset"}, headers=h)
+    r = api.patch(cards_url(proj, f"/api/cards/{key}"), json={"action": "reset"}, headers=h)
     assert r.status_code == 200, r.text
     assert r.json()["card"]["status"] == "active"
     # expires_at 不动
@@ -250,11 +271,11 @@ def test_reset_from_revoked(api, project_with_card):
 
 def test_reset_from_suspended(api, project_with_card):
     proj, card = project_with_card
-    h = admin_headers(proj)
+    h = admin_headers()
     key = card["card_key"]
-    api.patch(f"/api/cards/{key}", json={"action": "suspend"}, headers=h)
+    api.patch(cards_url(proj, f"/api/cards/{key}"), json={"action": "suspend"}, headers=h)
 
-    r = api.patch(f"/api/cards/{key}", json={"action": "reset"}, headers=h)
+    r = api.patch(cards_url(proj, f"/api/cards/{key}"), json={"action": "reset"}, headers=h)
     assert r.status_code == 200
     assert r.json()["card"]["status"] == "active"
     assert r.json()["card"]["expires_at"] == card["expires_at"]
@@ -265,13 +286,13 @@ def test_reset_restores_resolve(api, project_with_card):
     from tests.conftest import resolve_headers
 
     proj, card = project_with_card
-    h = admin_headers(proj)
+    h = admin_headers()
     key = card["card_key"]
 
-    api.patch(f"/api/cards/{key}", json={"action": "revoke"}, headers=h)
+    api.patch(cards_url(proj, f"/api/cards/{key}"), json={"action": "revoke"}, headers=h)
     body = api.post("/api/resolve", json={"card_key": key}, headers=resolve_headers(proj)).json()
     assert body["valid"] is False and body["reason"] == "revoked"
 
-    api.patch(f"/api/cards/{key}", json={"action": "reset"}, headers=h)
+    api.patch(cards_url(proj, f"/api/cards/{key}"), json={"action": "reset"}, headers=h)
     body = api.post("/api/resolve", json={"card_key": key}, headers=resolve_headers(proj)).json()
     assert body["valid"] is True and body["reason"] is None

@@ -1,25 +1,29 @@
 """
 pytest 共享 fixtures。
 
-测试数据库：本机 PostgreSQL（默认 postgresql://postgres:postgres@127.0.0.1:15432/cardlink_test，
-可用环境变量 DATABASE_URL 覆盖）。每个测试会话会 DROP SCHEMA public 重建，切勿指向有数据的库。
+测试数据库：每个测试会话用一个临时 SQLite 文件（tmp 目录），跑完即弃，
+不依赖任何外部数据库服务。
 
 环境变量必须在导入 app 之前设置（config.py 缺失必填项会拒启）。
 """
 import os
+import tempfile
 
 # 必须在导入 app 之前设置
+_TEST_DIR = tempfile.mkdtemp(prefix="cardlink-test-")
 os.environ["DATABASE_URL"] = os.environ.get(
-    "DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:15432/cardlink_test"
+    "DATABASE_URL", os.path.join(_TEST_DIR, "test.db")
 )
 os.environ["MASTER_KEY"] = os.environ.get("MASTER_KEY", "test-master-key")
+os.environ["ADMIN_USERNAME"] = os.environ.get("ADMIN_USERNAME", "admin")
+os.environ["ADMIN_PASSWORD"] = os.environ.get("ADMIN_PASSWORD", "test-admin-password")
+os.environ.setdefault("ADMIN_SESSION_DAYS", "7")
 os.environ.setdefault("SCAN_INTERVAL_MINUTES", "60")
 os.environ.setdefault("EXPIRING_DAYS", "7")
 
 from datetime import datetime, timedelta, timezone  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-import psycopg2  # noqa: E402
 import pytest  # noqa: E402
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
@@ -35,18 +39,9 @@ MASTER_HEADERS = {"X-Master-Key": os.environ["MASTER_KEY"]}
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_db():
-    """每个测试会话：清空 schema → Alembic 建表 → 建连接池"""
-    wipe = psycopg2.connect(TEST_DATABASE_URL)
-    try:
-        wipe.autocommit = True
-        with wipe.cursor() as cur:
-            cur.execute("DROP SCHEMA IF EXISTS public CASCADE")
-            cur.execute("CREATE SCHEMA public")
-    finally:
-        wipe.close()
-
+    """每个测试会话：Alembic 在临时 SQLite 文件上建表 → 初始化连接"""
     cfg = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    cfg.set_main_option("sqlalchemy.url", TEST_DATABASE_URL)
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{TEST_DATABASE_URL}")
     command.upgrade(cfg, "head")
 
     init_db()
@@ -56,11 +51,11 @@ def setup_db():
 
 @pytest.fixture(autouse=True)
 def clean_db():
-    """每个测试函数前清空两张表"""
+    """每个测试函数前清空所有表"""
     with database.get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM cards")
-            cur.execute("DELETE FROM projects")
+        conn.execute("DELETE FROM cards")
+        conn.execute("DELETE FROM admin_sessions")
+        conn.execute("DELETE FROM projects")
 
 
 @pytest.fixture
@@ -87,16 +82,29 @@ def project_with_card(project, api):
     """常用组合：项目 + 一个 30 天授权的账号，返回 (project, card)"""
     proj = project()
     r = api.post(
-        "/api/cards",
-        json={"card_key": "88801234", "days": 30, "plan_code": "pro", "remark": "测试客户"},
-        headers={"X-Admin-Key": proj["admin_key"]},
+        cards_url(proj, "/api/cards"),
+        json={"card_key": "88801234", "days": 30, "remark": "测试客户"},
+        headers=admin_headers(proj),
     )
     assert r.status_code == 200, r.text
     return proj, r.json()["card"]
 
 
-def admin_headers(project):
-    return {"X-Admin-Key": project["admin_key"]}
+def admin_headers(project=None):
+    """面板管理员 session 头（登录一次拿 token；管理接口需配合 cards_url 带 project_id）"""
+    client = TestClient(app)
+    r = client.post(
+        "/api/auth/login",
+        json={"username": os.environ["ADMIN_USERNAME"], "password": os.environ["ADMIN_PASSWORD"]},
+    )
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['token']}"}
+
+
+def cards_url(project, path):
+    """给管理面 URL 追加 ?project_id=（admin session 必传）"""
+    sep = "&" if "?" in path else "?"
+    return f"{path}{sep}project_id={project['id']}"
 
 
 def resolve_headers(project):
@@ -104,13 +112,12 @@ def resolve_headers(project):
 
 
 def set_expires_at(card_key, dt: datetime):
-    """直接把卡的 expires_at 改到指定时间（构造临期/已过期场景）"""
+    """直接把账号的 expires_at 改到指定时间（构造临期/已过期场景）"""
     with database.get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE cards SET expires_at = %s WHERE card_key = %s",
-                (dt, card_key),
-            )
+        conn.execute(
+            "UPDATE cards SET expires_at = ? WHERE card_key = ?",
+            (dt.isoformat(), card_key),
+        )
 
 
 def utcnow():

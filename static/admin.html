@@ -26,7 +26,6 @@
     position: sticky; top: 0; z-index: 10;
   }
   header h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  header .who { color: var(--muted); font-size: 13px; }
   header .spacer { flex: 1; }
   main { max-width: 1080px; margin: 0 auto; padding: 20px; }
   .card {
@@ -77,6 +76,13 @@
     background: #fff; border: 1px solid var(--border); border-radius: 6px;
     padding: 4px 8px; word-break: break-all; font-size: 12.5px;
   }
+  /* 标签页 */
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tabs button {
+    border: none; background: transparent; padding: 8px 16px; font-size: 14px;
+    color: var(--muted); border-bottom: 2px solid transparent; border-radius: 0;
+  }
+  .tabs button.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
   /* toast */
   #toasts { position: fixed; top: 64px; right: 16px; z-index: 100; display: flex; flex-direction: column; gap: 8px; }
   .toast {
@@ -101,6 +107,7 @@
   #modal input { width: 100%; }
   #modal .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
   .login-box { max-width: 420px; margin: 60px auto; }
+  .login-box .row { margin-top: 8px; }
   .hidden { display: none !important; }
   .actions-cell { white-space: nowrap; }
   .actions-cell button { margin: 2px 2px; }
@@ -110,90 +117,103 @@
 
 <header>
   <h1>CardLink 管理后台</h1>
-  <span class="who hidden" id="whoami"></span>
   <span class="spacer"></span>
-  <button id="btn-logout" class="hidden">退出</button>
+  <button id="btn-logout" class="hidden">退出登录</button>
 </header>
 
 <main id="app">
 
-  <!-- 登录 -->
+  <!-- 登录：管理员账号密码 -->
   <div id="view-login" class="card login-box">
-    <h2>输入密钥进入</h2>
-    <p class="muted">支持两种密钥：项目管理密钥（X-Admin-Key）进入授权管理；MASTER_KEY 进入项目管理。</p>
-    <div class="row">
-      <input type="password" id="input-key" placeholder="粘贴密钥" style="flex:1">
-      <button class="primary" id="btn-login">进入</button>
-    </div>
+    <h2>管理员登录</h2>
+    <div class="row"><input id="input-username" placeholder="用户名" style="flex:1" autocomplete="username"></div>
+    <div class="row"><input type="password" id="input-password" placeholder="密码" style="flex:1" autocomplete="current-password"></div>
+    <div class="row"><button class="primary" id="btn-login" style="width:100%">登录</button></div>
   </div>
 
-  <!-- MASTER_KEY：项目管理 -->
-  <div id="view-master" class="hidden">
-    <div class="card">
-      <h2>创建项目</h2>
-      <div class="row">
-        <input id="proj-name" placeholder="项目名（必填）" style="flex:1;min-width:140px">
-        <input id="proj-callback" placeholder="callback_url（可选，接收 webhook）" style="flex:2;min-width:200px">
-        <button class="primary" id="btn-create-proj">创建</button>
-      </div>
-      <div id="proj-secret" class="secret-box hidden"></div>
-    </div>
-    <div class="card">
-      <div class="row" style="justify-content:space-between">
-        <h2 style="margin:0">项目列表</h2>
-        <button class="small" id="btn-refresh-proj">刷新</button>
-      </div>
-      <div class="table-wrap" style="margin-top:10px">
-        <table>
-          <thead><tr><th>ID</th><th>名称</th><th>callback_url</th><th>创建时间</th></tr></thead>
-          <tbody id="proj-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <!-- X-Admin-Key：卡号管理 -->
-  <div id="view-admin" class="hidden">
-    <div class="card">
-      <h2>添加客户授权</h2>
-      <div class="row">
-        <input id="gen-account" placeholder="交易账号（纯数字 4~32 位）" style="width:220px" inputmode="numeric">
-        <input id="gen-days" type="number" min="1" value="30" style="width:110px" title="授权天数">
-        <input id="gen-plan" placeholder="plan_code（可选）" style="width:130px">
-        <input id="gen-remark" placeholder="备注（如客户名）" style="flex:1;min-width:120px">
-        <button class="primary" id="btn-generate">添加</button>
-      </div>
-      <div class="muted" style="margin-top:6px;font-size:12.5px">交易账号即授权标识；授权天数到期后需续费</div>
+  <!-- 登录后的主界面 -->
+  <div id="view-main" class="hidden">
+    <div class="tabs">
+      <button id="tab-cards" class="active">授权管理</button>
+      <button id="tab-projects">项目管理</button>
     </div>
 
-    <div class="card">
-      <div class="row">
-        <h2 style="margin:0;flex:1">授权列表</h2>
-        <input id="filter-search" placeholder="搜索账号" style="width:150px" inputmode="numeric">
-        <select id="filter-status">
-          <option value="">全部状态</option>
-          <option value="active">active</option>
-          <option value="suspended">suspended</option>
-          <option value="revoked">revoked</option>
-        </select>
-        <select id="filter-expiring">
-          <option value="">不限到期</option>
-          <option value="1d">1 天内到期</option>
-          <option value="3d">3 天内到期</option>
-          <option value="7d">7 天内到期</option>
-          <option value="30d">30 天内到期</option>
-        </select>
-        <button class="small" id="btn-refresh-cards">刷新</button>
+    <!-- 授权管理 -->
+    <div id="pane-cards">
+      <div class="card">
+        <div class="row">
+          <h2 style="margin:0">当前项目</h2>
+          <select id="project-select" style="flex:1;max-width:320px"></select>
+        </div>
       </div>
-      <div class="table-wrap" style="margin-top:10px">
-        <table>
-          <thead>
-            <tr><th>交易账号</th><th>套餐</th><th>状态</th><th>到期时间</th><th>备注</th><th>操作</th></tr>
-          </thead>
-          <tbody id="card-tbody"></tbody>
-        </table>
+
+      <div id="cards-area" class="hidden">
+        <div class="card">
+          <h2>添加客户授权</h2>
+          <div class="row">
+            <input id="gen-account" placeholder="交易账号（纯数字 4~32 位）" style="width:220px" inputmode="numeric">
+            <input id="gen-days" type="number" min="1" value="30" style="width:110px" title="授权天数">
+            <input id="gen-remark" placeholder="备注（如客户名）" style="flex:1;min-width:120px">
+            <button class="primary" id="btn-generate">添加</button>
+          </div>
+          <div class="muted" style="margin-top:6px;font-size:12.5px">交易账号即授权标识；授权天数到期后需续费</div>
+        </div>
+
+        <div class="card">
+          <div class="row">
+            <h2 style="margin:0;flex:1">授权列表</h2>
+            <input id="filter-search" placeholder="搜索账号" style="width:150px" inputmode="numeric">
+            <select id="filter-status">
+              <option value="">全部状态</option>
+              <option value="active">active</option>
+              <option value="suspended">suspended</option>
+              <option value="revoked">revoked</option>
+            </select>
+            <select id="filter-expiring">
+              <option value="">不限到期</option>
+              <option value="1d">1 天内到期</option>
+              <option value="3d">3 天内到期</option>
+              <option value="7d">7 天内到期</option>
+              <option value="30d">30 天内到期</option>
+            </select>
+            <button class="small" id="btn-refresh-cards">刷新</button>
+          </div>
+          <div class="table-wrap" style="margin-top:10px">
+            <table>
+              <thead>
+                <tr><th>交易账号</th><th>状态</th><th>到期时间</th><th>备注</th><th>操作</th></tr>
+              </thead>
+              <tbody id="card-tbody"></tbody>
+            </table>
+          </div>
+          <div class="muted" id="card-count" style="margin-top:8px;font-size:12.5px"></div>
+        </div>
       </div>
-      <div class="muted" id="card-count" style="margin-top:8px;font-size:12.5px"></div>
+    </div>
+
+    <!-- 项目管理 -->
+    <div id="pane-projects" class="hidden">
+      <div class="card">
+        <h2>创建项目</h2>
+        <div class="row">
+          <input id="proj-name" placeholder="项目名（必填）" style="flex:1;min-width:140px">
+          <input id="proj-callback" placeholder="callback_url（可选，接收 webhook）" style="flex:2;min-width:200px">
+          <button class="primary" id="btn-create-proj">创建</button>
+        </div>
+        <div id="proj-secret" class="secret-box hidden"></div>
+      </div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">项目列表</h2>
+          <button class="small" id="btn-refresh-proj">刷新</button>
+        </div>
+        <div class="table-wrap" style="margin-top:10px">
+          <table>
+            <thead><tr><th>ID</th><th>名称</th><th>查询密钥（resolve_token）</th><th>callback_url</th><th>创建时间</th><th>操作</th></tr></thead>
+            <tbody id="proj-tbody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -217,10 +237,10 @@
 "use strict";
 
 // ---------- 状态 ----------
-const LS_KEY = "cardlink_key";
-const LS_ROLE = "cardlink_role"; // "admin" | "master"
-let authKey = localStorage.getItem(LS_KEY) || "";
-let authRole = localStorage.getItem(LS_ROLE) || "";
+const LS_TOKEN = "cardlink_token";
+let authToken = localStorage.getItem(LS_TOKEN) || "";
+let currentProjectId = null;   // 授权管理视图当前选中的项目
+let allCards = [];             // 最近一次加载的完整列表，搜索框做前端过滤
 
 const $ = (id) => document.getElementById(id);
 
@@ -251,7 +271,6 @@ function fallbackCopy(text, done) {
   ta.remove();
 }
 
-// 复制按钮元素
 function copyBtn(text) {
   const b = document.createElement("button");
   b.className = "small";
@@ -260,7 +279,7 @@ function copyBtn(text) {
   return b;
 }
 
-// 通用弹窗：opts = {title, html, inputValue?, danger?} → Promise<string|true|null>
+// 通用弹窗：opts = {title, html, inputValue?, inputType?, danger?} → Promise<string|true|null>
 function openModal(opts) {
   return new Promise((resolve) => {
     const mask = $("modal-mask");
@@ -276,7 +295,6 @@ function openModal(opts) {
       setTimeout(() => input.focus(), 50);
     }
     const okBtn = $("modal-ok");
-    okBtn.className = opts.danger ? "primary danger" : "primary";
     okBtn.style.background = opts.danger ? "var(--danger)" : "";
     okBtn.style.borderColor = opts.danger ? "var(--danger)" : "";
 
@@ -294,11 +312,10 @@ function openModal(opts) {
 const confirmBox = (title, html, danger) =>
   openModal({ title, html, danger }).then((v) => v === true);
 
-// ---------- API ----------
+// ---------- API（统一带 Bearer session） ----------
 async function api(path, { method = "GET", body } = {}) {
   const headers = { "Content-Type": "application/json" };
-  if (authRole === "admin") headers["X-Admin-Key"] = authKey;
-  else if (authRole === "master") headers["X-Master-Key"] = authKey;
+  if (authToken) headers["Authorization"] = "Bearer " + authToken;
   const resp = await fetch(path, {
     method, headers, body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -314,51 +331,192 @@ async function api(path, { method = "GET", body } = {}) {
   return data;
 }
 
-// ---------- 身份识别：先试项目管理密钥，再试 MASTER_KEY ----------
-async function detectRole(key) {
-  const probe = async (path, headerName) => {
-    const resp = await fetch(path, { headers: { [headerName]: key } });
-    return resp.status;
-  };
-  if (await probe("/api/cards", "X-Admin-Key") === 200) return "admin";
-  if (await probe("/api/projects", "X-Master-Key") === 200) return "master";
-  return null;
+// 会话失效（401/403）统一回登录页
+function handleAuthError(e) {
+  if (e.status === 401 || e.status === 403) {
+    toast("会话已失效，请重新登录", "error");
+    logout(true);
+    return true;
+  }
+  return false;
 }
 
-// ---------- 视图切换 ----------
+// ---------- 登录 / 退出 ----------
+async function login() {
+  const username = $("input-username").value.trim();
+  const password = $("input-password").value;
+  if (!username || !password) return toast("请输入用户名和密码", "error");
+  try {
+    const data = await api("/api/auth/login", { method: "POST", body: { username, password } });
+    authToken = data.token;
+    localStorage.setItem(LS_TOKEN, authToken);
+    $("input-password").value = "";
+    enterMain();
+    toast("登录成功", "ok");
+  } catch (e) {
+    toast(e.message || "登录失败", "error");
+  }
+}
+
+async function logout(silent) {
+  if (authToken && !silent) {
+    try { await api("/api/auth/logout", { method: "POST" }); } catch (e) { /* 忽略 */ }
+  }
+  authToken = "";
+  localStorage.removeItem(LS_TOKEN);
+  currentProjectId = null;
+  showView("login");
+}
+
 function showView(name) {
   $("view-login").classList.toggle("hidden", name !== "login");
-  $("view-master").classList.toggle("hidden", name !== "master");
-  $("view-admin").classList.toggle("hidden", name !== "admin");
-  $("btn-logout").classList.toggle("hidden", name === "login");
-  $("whoami").classList.toggle("hidden", name === "login");
-  if (name === "admin") $("whoami").textContent = "项目管理密钥";
-  if (name === "master") $("whoami").textContent = "MASTER_KEY";
+  $("view-main").classList.toggle("hidden", name !== "main");
+  $("btn-logout").classList.toggle("hidden", name !== "main");
 }
 
-async function login(key) {
-  if (!/^[\x21-\x7e]+$/.test(key)) {
-    toast("密钥包含非法字符：请检查是否混入了中文、全角符号或多余空格", "error");
-    return;
-  }
-  const role = await detectRole(key);
-  if (!role) {
-    toast("密钥无效：既不是项目管理密钥也不是 MASTER_KEY", "error");
-    return;
-  }
-  authKey = key; authRole = role;
-  localStorage.setItem(LS_KEY, key);
-  localStorage.setItem(LS_ROLE, role);
-  if (role === "admin") { showView("admin"); loadCards(); }
-  else { showView("master"); loadProjects(); }
-  toast("已进入" + (role === "admin" ? "授权管理" : "项目管理"), "ok");
+function enterMain() {
+  showView("main");
+  loadProjects().then(() => loadCards());
 }
 
-function logout() {
-  authKey = ""; authRole = "";
-  localStorage.removeItem(LS_KEY);
-  localStorage.removeItem(LS_ROLE);
-  showView("login");
+// ---------- 标签页 ----------
+function switchTab(name) {
+  $("tab-cards").classList.toggle("active", name === "cards");
+  $("tab-projects").classList.toggle("active", name === "projects");
+  $("pane-cards").classList.toggle("hidden", name !== "cards");
+  $("pane-projects").classList.toggle("hidden", name !== "projects");
+}
+
+// ---------- 项目下拉 ----------
+async function loadProjects() {
+  try {
+    const data = await api("/api/projects");
+    const sel = $("project-select");
+    const prev = currentProjectId;
+    sel.innerHTML = "";
+    for (const p of data.projects) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = `${p.name}（#${p.id}）`;
+      sel.appendChild(opt);
+    }
+    renderProjectList(data.projects);
+    if (data.projects.length === 0) {
+      currentProjectId = null;
+      $("cards-area").classList.add("hidden");
+      return;
+    }
+    // 保持原选择，否则默认第一个
+    const stillThere = data.projects.some((p) => p.id === prev);
+    currentProjectId = stillThere ? prev : data.projects[0].id;
+    sel.value = currentProjectId;
+    $("cards-area").classList.remove("hidden");
+  } catch (e) {
+    if (!handleAuthError(e)) toast("加载项目失败：" + e.message, "error");
+  }
+}
+
+// 密钥掩码：前 3 位 + ***** + 后 4 位
+function maskToken(t) {
+  if (!t) return "-";
+  if (t.length <= 7) return "*****";
+  return t.slice(0, 3) + "*****" + t.slice(-4);
+}
+
+function renderProjectList(projects) {
+  const tbody = $("proj-tbody");
+  tbody.innerHTML = "";
+  for (const p of projects) {
+    const tr = document.createElement("tr");
+
+    const tdId = document.createElement("td");
+    tdId.textContent = p.id;
+    const tdName = document.createElement("td");
+    tdName.textContent = p.name;
+
+    // 查询密钥：掩码展示 + 一键复制完整 token
+    const tdToken = document.createElement("td");
+    const tokenSpan = document.createElement("span");
+    tokenSpan.className = "mono";
+    tokenSpan.textContent = maskToken(p.resolve_token);
+    tdToken.append(tokenSpan, " ", copyBtn(p.resolve_token));
+
+    const tdCallback = document.createElement("td");
+    tdCallback.className = "muted";
+    tdCallback.textContent = p.callback_url || "-";
+    const tdCreated = document.createElement("td");
+    tdCreated.className = "muted";
+    tdCreated.textContent = fmtTime(p.created_at);
+
+    const tdOps = document.createElement("td");
+    const btnDel = document.createElement("button");
+    btnDel.className = "small danger";
+    btnDel.textContent = "删除";
+    btnDel.onclick = () => deleteProject(p);
+    tdOps.appendChild(btnDel);
+
+    tr.append(tdId, tdName, tdToken, tdCallback, tdCreated, tdOps);
+    tbody.appendChild(tr);
+  }
+}
+
+// 删除项目：双确认 —— 第一次确认框，第二次要求手输"确认删除"
+async function deleteProject(p) {
+  const ok1 = await confirmBox(
+    "删除项目 " + p.name,
+    `<div>删除项目 <b>${p.name}</b>（#${p.id}）将同时删除其下<b>所有授权卡</b>，不可恢复。是否继续？</div>`,
+    true,
+  );
+  if (!ok1) return;
+  const v = await openModal({
+    title: "二次确认",
+    html: '<div class="muted" style="margin-bottom:8px">请输入「确认删除」四个字以完成删除：</div>',
+    inputValue: "",
+    danger: true,
+  });
+  if (v === null) return;
+  if (v !== "确认删除") {
+    toast("输入不匹配，已取消删除", "error");
+    return;
+  }
+  try {
+    await api(`/api/projects/${p.id}`, { method: "DELETE" });
+    toast(`项目 ${p.name} 已删除`, "ok");
+    // 删的可能是当前选中项目，重载项目列表与授权列表
+    loadProjects().then(() => loadCards());
+  } catch (e) {
+    if (!handleAuthError(e)) toast("删除失败：" + e.message, "error");
+  }
+}
+
+async function createProject() {
+  const name = $("proj-name").value.trim();
+  const callback_url = $("proj-callback").value.trim();
+  if (!name) return toast("项目名必填", "error");
+  try {
+    const p = await api("/api/projects", {
+      method: "POST",
+      body: callback_url ? { name, callback_url } : { name },
+    });
+    // 查询密钥：掩码展示 + 一键复制（列表里随时可再查）
+    const box = $("proj-secret");
+    box.classList.remove("hidden");
+    box.innerHTML = "";
+    const warn = document.createElement("div");
+    warn.className = "warn-text";
+    warn.textContent = "项目「" + p.name + "」已创建，查询密钥（resolve_token）：";
+    box.appendChild(warn);
+    const line = document.createElement("div");
+    line.className = "secret-line";
+    const code = document.createElement("code");
+    code.textContent = maskToken(p.resolve_token);
+    line.append(code, copyBtn(p.resolve_token));
+    box.appendChild(line);
+    $("proj-name").value = "";
+    loadProjects().then(() => loadCards());
+  } catch (e) {
+    if (!handleAuthError(e)) toast("创建失败：" + e.message, "error");
+  }
 }
 
 // ---------- 时间格式化与到期高亮 ----------
@@ -368,34 +526,39 @@ function fmtTime(iso) {
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+// 到期高亮与剩余天数：≤7 天橙色、已过期红色
 function expClass(iso) {
   const ms = new Date(iso) - Date.now();
   if (ms <= 0) return "exp-over";
   if (ms <= 7 * 86400e3) return "exp-soon";
   return "exp-ok";
 }
-function expText(iso) {
+// 剩余天数（向下取整）；已过期显示"已过期 X 天"
+function remainText(iso) {
   const ms = new Date(iso) - Date.now();
-  if (ms <= 0) return fmtTime(iso) + "（已过期）";
-  return fmtTime(iso);
+  if (ms <= 0) return "已过期 " + Math.floor(-ms / 86400e3) + " 天";
+  return "剩余 " + Math.floor(ms / 86400e3) + " 天";
 }
 
-// ---------- 授权管理 ----------
-let allCards = [];  // 最近一次加载的完整列表，搜索框做前端过滤
+// ---------- 授权管理（带 project_id） ----------
+function cardsUrl(path) {
+  const sep = path.includes("?") ? "&" : "?";
+  return path + sep + "project_id=" + currentProjectId;
+}
 
 async function loadCards() {
+  if (!currentProjectId) return;
   const params = new URLSearchParams();
   const st = $("filter-status").value;
   const ex = $("filter-expiring").value;
   if (st) params.set("status", st);
   if (ex) params.set("expiring_in", ex);
   try {
-    const data = await api("/api/cards" + (params.size ? "?" + params : ""));
+    const data = await api(cardsUrl("/api/cards" + (params.size ? "?" + params : "")));
     allCards = data.cards;
     renderCards();
   } catch (e) {
-    toast("加载失败：" + e.message, "error");
-    if (e.status === 403) logout();
+    if (!handleAuthError(e)) toast("加载失败：" + e.message, "error");
   }
 }
 
@@ -415,18 +578,21 @@ function renderCards() {
     keySpan.textContent = c.card_key;
     tdKey.append(keySpan, " ", copyBtn(c.card_key));
 
-    const tdPlan = document.createElement("td");
-    tdPlan.textContent = c.plan_code || "-";
-
     const tdStatus = document.createElement("td");
     const badge = document.createElement("span");
     badge.className = "badge " + c.status;
     badge.textContent = c.status;
     tdStatus.appendChild(badge);
 
+    // 到期时间两行：第一行日期时间，第二行剩余天数
     const tdExp = document.createElement("td");
     tdExp.className = expClass(c.expires_at);
-    tdExp.textContent = expText(c.expires_at);
+    const expLine1 = document.createElement("div");
+    expLine1.textContent = fmtTime(c.expires_at);
+    const expLine2 = document.createElement("div");
+    expLine2.style.fontSize = "12px";
+    expLine2.textContent = remainText(c.expires_at);
+    tdExp.append(expLine1, expLine2);
 
     // 备注（点击可改）
     const tdRemark = document.createElement("td");
@@ -472,7 +638,7 @@ function renderCards() {
       tdOps.append(b);
     }
 
-    tr.append(tdKey, tdPlan, tdStatus, tdExp, tdRemark, tdOps);
+    tr.append(tdKey, tdStatus, tdExp, tdRemark, tdOps);
     tbody.appendChild(tr);
   }
 }
@@ -483,11 +649,10 @@ async function createCard() {
   if (!/^\d{4,32}$/.test(account)) return toast("交易账号需为 4~32 位纯数字", "error");
   if (!days || days < 1) return toast("授权天数需 ≥ 1", "error");
   try {
-    await api("/api/cards", {
+    await api(cardsUrl("/api/cards"), {
       method: "POST",
       body: {
         card_key: account, days,
-        plan_code: $("gen-plan").value.trim(),
         remark: $("gen-remark").value.trim(),
       },
     });
@@ -495,7 +660,7 @@ async function createCard() {
     $("gen-account").value = "";
     loadCards();
   } catch (e) {
-    toast("创建失败：" + e.message, "error");
+    if (!handleAuthError(e)) toast("创建失败：" + e.message, "error");
   }
 }
 
@@ -510,7 +675,7 @@ async function renewCard(c) {
   const days = parseInt(v, 10);
   if (!days || days < 1) return toast("天数需 ≥ 1", "error");
   try {
-    const data = await api(`/api/cards/${encodeURIComponent(c.card_key)}/renew`, {
+    const data = await api(cardsUrl(`/api/cards/${encodeURIComponent(c.card_key)}/renew`), {
       method: "POST", body: { days },
     });
     toast("已续费，新到期：" + fmtTime(data.expires_at), "ok");
@@ -522,7 +687,7 @@ async function renewCard(c) {
 
 async function patchCard(c, action) {
   try {
-    await api(`/api/cards/${encodeURIComponent(c.card_key)}`, {
+    await api(cardsUrl(`/api/cards/${encodeURIComponent(c.card_key)}`), {
       method: "PATCH", body: { action },
     });
     toast(action === "suspend" ? "已暂停" : "已恢复", "ok");
@@ -540,7 +705,7 @@ async function revokeCard(c) {
   );
   if (!ok) return;
   try {
-    await api(`/api/cards/${encodeURIComponent(c.card_key)}`, {
+    await api(cardsUrl(`/api/cards/${encodeURIComponent(c.card_key)}`), {
       method: "PATCH", body: { action: "revoke" },
     });
     toast("已吊销", "ok");
@@ -557,7 +722,7 @@ async function resetCard(c) {
   );
   if (!ok) return;
   try {
-    await api(`/api/cards/${encodeURIComponent(c.card_key)}`, {
+    await api(cardsUrl(`/api/cards/${encodeURIComponent(c.card_key)}`), {
       method: "PATCH", body: { action: "reset" },
     });
     toast("已重置为 active", "ok");
@@ -574,7 +739,7 @@ async function editRemark(c) {
   });
   if (v === null) return;
   try {
-    await api(`/api/cards/${encodeURIComponent(c.card_key)}`, {
+    await api(cardsUrl(`/api/cards/${encodeURIComponent(c.card_key)}`), {
       method: "PATCH", body: { remark: v },
     });
     toast("备注已更新", "ok");
@@ -584,68 +749,18 @@ async function editRemark(c) {
   }
 }
 
-// ---------- 项目管理（MASTER_KEY） ----------
-async function loadProjects() {
-  try {
-    const data = await api("/api/projects");
-    const tbody = $("proj-tbody");
-    tbody.innerHTML = "";
-    for (const p of data.projects) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${p.id}</td><td></td><td class="muted"></td><td class="muted">${fmtTime(p.created_at)}</td>`;
-      tr.children[1].textContent = p.name;
-      tr.children[2].textContent = p.callback_url || "-";
-      tbody.appendChild(tr);
-    }
-  } catch (e) {
-    toast("加载失败：" + e.message, "error");
-    if (e.status === 403) logout();
-  }
-}
-
-async function createProject() {
-  const name = $("proj-name").value.trim();
-  const callback_url = $("proj-callback").value.trim();
-  if (!name) return toast("项目名必填", "error");
-  try {
-    const p = await api("/api/projects", {
-      method: "POST",
-      body: callback_url ? { name, callback_url } : { name },
-    });
-    // 密钥只显示一次，醒目提示 + 复制按钮
-    const box = $("proj-secret");
-    box.classList.remove("hidden");
-    box.innerHTML = "";
-    const warn = document.createElement("div");
-    warn.className = "warn-text";
-    warn.textContent = "项目「" + p.name + "」已创建。以下密钥只显示这一次，请立即保存：";
-    box.appendChild(warn);
-    for (const [label, val] of [["admin_key（管理密钥）", p.admin_key], ["resolve_token（查询密钥）", p.resolve_token]]) {
-      const line = document.createElement("div");
-      line.className = "secret-line";
-      const lab = document.createElement("span");
-      lab.textContent = label + "：";
-      const code = document.createElement("code");
-      code.textContent = val;
-      line.append(lab, code, copyBtn(val));
-      box.appendChild(line);
-    }
-    $("proj-name").value = "";
-    loadProjects();
-  } catch (e) {
-    toast("创建失败：" + e.message, "error");
-  }
-}
-
 // ---------- 事件绑定与启动 ----------
-$("btn-login").onclick = () => {
-  const key = $("input-key").value.trim();
-  if (key) login(key);
-};
-$("input-key").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") $("btn-login").click();
+$("btn-login").onclick = login;
+$("input-password").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") login();
 });
-$("btn-logout").onclick = logout;
+$("btn-logout").onclick = () => logout(false);
+$("tab-cards").onclick = () => switchTab("cards");
+$("tab-projects").onclick = () => switchTab("projects");
+$("project-select").onchange = (e) => {
+  currentProjectId = parseInt(e.target.value, 10);
+  loadCards();
+};
 $("btn-generate").onclick = createCard;
 $("btn-refresh-cards").onclick = loadCards;
 $("filter-status").onchange = loadCards;
@@ -654,20 +769,9 @@ $("filter-search").oninput = renderCards;
 $("btn-create-proj").onclick = createProject;
 $("btn-refresh-proj").onclick = loadProjects;
 
-// 已存密钥则直接恢复会话；失效则回登录页
-if (authKey && authRole) {
-  if (!/^[\x21-\x7e]+$/.test(authKey)) {
-    logout();
-  } else {
-  detectRole(authKey).then((role) => {
-    if (role === authRole) {
-      if (role === "admin") { showView("admin"); loadCards(); }
-      else { showView("master"); loadProjects(); }
-    } else {
-      logout();
-    }
-  }).catch(logout);
-  }
+// 已存 token 则直接恢复会话；失效则回登录页
+if (authToken) {
+  api("/api/projects").then(() => enterMain()).catch(() => logout(true));
 } else {
   showView("login");
 }

@@ -1,7 +1,9 @@
 """到期扫描测试：card.expiring / card.expired 事件、reminded_at / expired_notified_at 去重、payload 与 header"""
+from datetime import timedelta
+
 import database
 from scheduler import run_expiry_scan
-from tests.conftest import admin_headers, days_from_now, set_expires_at
+from tests.conftest import admin_headers, cards_url, days_from_now, set_expires_at, utcnow
 
 
 class MockResponse:
@@ -19,7 +21,7 @@ def _mock_httpx(monkeypatch, record: list):
 def _make_project_with_card(api, project, name, callback_url, account="88880001"):
     proj = project(name=name, callback_url=callback_url)
     card = api.post(
-        "/api/cards", json={"card_key": account, "days": 30, "plan_code": "pro"},
+        cards_url(proj, "/api/cards"), json={"card_key": account, "days": 30},
         headers=admin_headers(proj),
     ).json()["card"]
     return proj, card
@@ -39,7 +41,6 @@ def test_scan_sends_expiring_event(api, project, monkeypatch):
     assert call["url"] == "https://example.com/hook"
     assert call["json"]["event"] == "card.expiring"
     assert call["json"]["card_key"] == card["card_key"]
-    assert call["json"]["plan_code"] == "pro"
     assert call["json"]["project_id"] == proj["id"]
     assert "expires_at" in call["json"]
     # header 带项目 resolve_token 供校验
@@ -78,14 +79,12 @@ def test_scan_dedup_no_repeat(api, project, monkeypatch):
 
     # 两列都已标记
     with database.get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT reminded_at, expired_notified_at FROM cards WHERE card_key = %s",
-                (card["card_key"],),
-            )
-            reminded_at, expired_notified_at = cur.fetchone()
-    assert reminded_at is not None
-    assert expired_notified_at is not None
+        row = conn.execute(
+            "SELECT reminded_at, expired_notified_at FROM cards WHERE card_key = ?",
+            (card["card_key"],),
+        ).fetchone()
+    assert row["reminded_at"] is not None
+    assert row["expired_notified_at"] is not None
 
 
 def test_scan_marks_only_after_success(api, project, monkeypatch):
@@ -101,9 +100,10 @@ def test_scan_marks_only_after_success(api, project, monkeypatch):
     assert sent == {"card.expiring": 0, "card.expired": 0}
 
     with database.get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT reminded_at FROM cards WHERE card_key = %s", (card["card_key"],))
-            assert cur.fetchone()[0] is None
+        row = conn.execute(
+            "SELECT reminded_at FROM cards WHERE card_key = ?", (card["card_key"],)
+        ).fetchone()
+        assert row["reminded_at"] is None
 
     # 网络恢复后重扫，能推出去
     calls = []
@@ -124,9 +124,40 @@ def test_scan_skips_when_not_due(api, project, monkeypatch):
     set_expires_at(card2["card_key"], days_from_now(1))
     # 已 revoked 的过期卡：不打扰
     proj3, card3 = _make_project_with_card(api, project, "skip3", "https://example.com/hook", account="88880013")
-    api.patch(f"/api/cards/{card3['card_key']}", json={"action": "revoke"}, headers=admin_headers(proj3))
+    api.patch(cards_url(proj3, f"/api/cards/{card3['card_key']}"), json={"action": "revoke"}, headers=admin_headers(proj3))
     set_expires_at(card3["card_key"], days_from_now(-1))
 
     sent = run_expiry_scan()
     assert sent == {"card.expiring": 0, "card.expired": 0}
     assert calls == []
+
+
+def test_scan_boundary_string_compare(api, project, monkeypatch):
+    """ISO 字符串比较的边界：恰好 now+7d 算临期、恰好 now 算已过期、超出 7d 不算"""
+    calls = []
+    _mock_httpx(monkeypatch, calls)
+    proj = project(name="boundary", callback_url="https://example.com/hook")
+
+    now = utcnow()
+    cases = {
+        "77000001": now + timedelta(days=7),            # 恰好临期阈值 → expiring
+        "77000002": now,                                 # 恰好现在（扫描时已过去几 ms）→ expired
+        "77000003": now + timedelta(days=7, seconds=5),  # 超出阈值 → 不推
+        "77000004": now + timedelta(days=6, hours=23),   # 阈值内 → expiring
+    }
+    for acc, exp in cases.items():
+        r = api.post(
+            cards_url(proj, "/api/cards"), json={"card_key": acc, "days": 30}, headers=admin_headers(proj)
+        )
+        assert r.status_code == 200, r.text
+        set_expires_at(acc, exp)
+
+    sent = run_expiry_scan()
+    assert sent == {"card.expiring": 2, "card.expired": 1}
+
+    by_key = {c["json"]["card_key"]: c["json"]["event"] for c in calls}
+    assert by_key == {
+        "77000001": "card.expiring",
+        "77000002": "card.expired",
+        "77000004": "card.expiring",
+    }
