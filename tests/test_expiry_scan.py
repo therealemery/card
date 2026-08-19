@@ -16,12 +16,12 @@ def _mock_httpx(monkeypatch, record: list):
     monkeypatch.setattr("scheduler.httpx.post", fake_post)
 
 
-def _make_project_with_card(api, project, name, callback_url):
+def _make_project_with_card(api, project, name, callback_url, account="88880001"):
     proj = project(name=name, callback_url=callback_url)
     card = api.post(
-        "/api/cards", json={"count": 1, "days": 30, "plan_code": "pro"},
+        "/api/cards", json={"card_key": account, "days": 30, "plan_code": "pro"},
         headers=admin_headers(proj),
-    ).json()["cards"][0]
+    ).json()["card"]
     return proj, card
 
 
@@ -118,12 +118,12 @@ def test_scan_skips_when_not_due(api, project, monkeypatch):
     _mock_httpx(monkeypatch, calls)
 
     # 30 天后到期：不临期
-    _make_project_with_card(api, project, "skip1", "https://example.com/hook")
+    _make_project_with_card(api, project, "skip1", "https://example.com/hook", account="88880011")
     # 无 callback_url
-    proj2, card2 = _make_project_with_card(api, project, "skip2", None)
+    proj2, card2 = _make_project_with_card(api, project, "skip2", None, account="88880012")
     set_expires_at(card2["card_key"], days_from_now(1))
     # 已 revoked 的过期卡：不打扰
-    proj3, card3 = _make_project_with_card(api, project, "skip3", "https://example.com/hook")
+    proj3, card3 = _make_project_with_card(api, project, "skip3", "https://example.com/hook", account="88880013")
     api.patch(f"/api/cards/{card3['card_key']}", json={"action": "revoke"}, headers=admin_headers(proj3))
     set_expires_at(card3["card_key"], days_from_now(-1))
 

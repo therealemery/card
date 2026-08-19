@@ -1,16 +1,16 @@
 """
-卡号管理面（6 个接口），统一用项目级 X-Admin-Key 鉴权，只能操作本项目下的卡。
+授权管理面（5 个接口），统一用项目级 X-Admin-Key 鉴权，只能操作本项目下的授权。
+
+card_key 即客户的交易账号（纯数字 4~32 位），由调用方在创建时传入，服务不生成。
 
 状态机：
   suspend  仅 active → suspended
   resume   仅 suspended → active
   revoke   任意状态 → revoked（终态）
+  reset    任意状态（含 revoked）→ active，不动 expires_at（误吊销恢复用；期限靠续费调）
 续费语义：expires_at = GREATEST(expires_at, NOW()) + days（未过期顺延，已过期从现在起算）
-换卡：老卡 revoked，新卡继承老卡剩余有效期，renewed_from 溯源
 """
-import random
 import re
-import string
 from typing import Optional
 
 import psycopg2.extras
@@ -18,22 +18,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from database import get_db
 from deps import get_project_by_admin
-from schemas import CardGenerateRequest, CardPatchRequest, CardRenewRequest
+from schemas import CardCreateRequest, CardPatchRequest, CardRenewRequest
 
 router = APIRouter(prefix="/api/cards", tags=["cards"])
 
-# suspend/resume/revoke 各自允许的起始状态
+# 各 action 允许的起始状态与目标状态
 _TRANSITIONS = {
     "suspend": ("active", "suspended"),
     "resume": ("suspended", "active"),
     "revoke": (("active", "suspended", "revoked"), "revoked"),
+    "reset": (("active", "suspended", "revoked"), "active"),
 }
-
-
-def generate_card_key() -> str:
-    """卡号格式：XXXX-XXXX-XXXX-XXXX（大写字母+数字）"""
-    chars = string.ascii_uppercase + string.digits
-    return "-".join("".join(random.choices(chars, k=4)) for _ in range(4))
 
 
 def _card_to_dict(row: dict) -> dict:
@@ -61,43 +56,34 @@ def _get_card(cur, card_key: str, project_id: int) -> dict:
     )
     row = cur.fetchone()
     if not row:
-        raise HTTPException(status_code=404, detail="卡号不存在")
+        raise HTTPException(status_code=404, detail="账号不存在")
     return dict(row)
 
 
-@router.post("", summary="批量生成卡号")
-def generate_cards(body: CardGenerateRequest, project: dict = Depends(get_project_by_admin)):
+@router.post("", summary="创建授权（card_key = 交易账号）")
+def create_card(body: CardCreateRequest, project: dict = Depends(get_project_by_admin)):
     with get_db() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cards = []
-            for _ in range(body.count):
-                # 主键冲突概率极低，仍用 SAVEPOINT 兜底重试（不回滚整批）
-                for attempt in range(5):
-                    card_key = generate_card_key()
-                    cur.execute("SAVEPOINT sp_insert")
-                    try:
-                        cur.execute(
-                            """
-                            INSERT INTO cards (card_key, project_id, plan_code, remark, expires_at)
-                            VALUES (%s, %s, %s, %s, NOW() + make_interval(days => %s))
-                            RETURNING *
-                            """,
-                            (card_key, project["id"], body.plan_code, body.remark, body.days),
-                        )
-                        cards.append(_card_to_dict(dict(cur.fetchone())))
-                        cur.execute("RELEASE SAVEPOINT sp_insert")
-                        break
-                    except Exception as e:
-                        cur.execute("ROLLBACK TO SAVEPOINT sp_insert")
-                        if "unique" not in str(e).lower() or attempt == 4:
-                            raise
-    return {"cards": cards, "count": len(cards)}
+            # card_key 是全局主键：任何项目下已存在都视为冲突
+            cur.execute("SELECT 1 FROM cards WHERE card_key = %s", (body.card_key,))
+            if cur.fetchone():
+                raise HTTPException(status_code=409, detail="该交易账号已存在授权")
+            cur.execute(
+                """
+                INSERT INTO cards (card_key, project_id, plan_code, remark, expires_at)
+                VALUES (%s, %s, %s, %s, NOW() + make_interval(days => %s))
+                RETURNING *
+                """,
+                (body.card_key, project["id"], body.plan_code, body.remark, body.days),
+            )
+            card = dict(cur.fetchone())
+    return {"card": _card_to_dict(card)}
 
 
-@router.get("", summary="卡号列表（?status= / ?expiring_in=7d）")
+@router.get("", summary="授权列表（?status= / ?expiring_in=7d）")
 def list_cards(
     status: Optional[str] = Query(None, pattern="^(active|suspended|revoked)$"),
-    expiring_in: Optional[str] = Query(None, description="如 7d，筛 N 天内到期且未过期的卡"),
+    expiring_in: Optional[str] = Query(None, description="如 7d，筛 N 天内到期且未过期的"),
     project: dict = Depends(get_project_by_admin),
 ):
     where = ["project_id = %(pid)s"]
@@ -125,7 +111,7 @@ def list_cards(
     return {"cards": [_card_to_dict(dict(r)) for r in rows], "count": len(rows)}
 
 
-@router.get("/{card_key}", summary="卡号详情")
+@router.get("/{card_key}", summary="授权详情")
 def card_detail(card_key: str, project: dict = Depends(get_project_by_admin)):
     with get_db() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -151,25 +137,29 @@ def renew_card(card_key: str, body: CardRenewRequest, project: dict = Depends(ge
     return {"card_key": card_key, "expires_at": new_expires.isoformat()}
 
 
-@router.patch("/{card_key}", summary="状态变更 suspend/resume/revoke（可顺带改备注）")
+@router.patch("/{card_key}", summary="状态变更 suspend/resume/revoke/reset、改备注（至少给一项）")
 def patch_card(card_key: str, body: CardPatchRequest, project: dict = Depends(get_project_by_admin)):
-    from_states, to_state = _TRANSITIONS[body.action]
+    if body.action is None and body.remark is None:
+        raise HTTPException(status_code=422, detail="action 与 remark 至少提供一个")
 
     with get_db() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             card = _get_card(cur, card_key, project["id"])
 
-            if card["status"] not in from_states:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"非法状态流转：{body.action} 不允许从 {card['status']} 发起",
-                )
-
-            sets = ["status = %s"]
-            params = [to_state]
+            sets, params = [], []
+            if body.action is not None:
+                from_states, to_state = _TRANSITIONS[body.action]
+                if card["status"] not in from_states:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"非法状态流转：{body.action} 不允许从 {card['status']} 发起",
+                    )
+                sets.append("status = %s")
+                params.append(to_state)
             if body.remark is not None:
                 sets.append("remark = %s")
                 params.append(body.remark)
+
             params.append(card_key)
             cur.execute(
                 f"UPDATE cards SET {', '.join(sets)} WHERE card_key = %s RETURNING *",
@@ -177,39 +167,3 @@ def patch_card(card_key: str, body: CardPatchRequest, project: dict = Depends(ge
             )
             updated = dict(cur.fetchone())
     return {"card": _card_to_dict(updated)}
-
-
-@router.post("/{card_key}/replace", summary="换卡：老卡 revoked，新卡继承剩余有效期")
-def replace_card(card_key: str, project: dict = Depends(get_project_by_admin)):
-    with get_db() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            old = _get_card(cur, card_key, project["id"])
-            if old["status"] == "revoked":
-                raise HTTPException(status_code=409, detail="已 revoked 的卡不能换卡")
-
-            cur.execute(
-                "UPDATE cards SET status = 'revoked' WHERE card_key = %s",
-                (card_key,),
-            )
-            # 新卡直接沿用老卡 expires_at（即继承剩余有效期；已过期则新卡亦过期）
-            for attempt in range(5):
-                new_key = generate_card_key()
-                cur.execute("SAVEPOINT sp_insert")
-                try:
-                    cur.execute(
-                        """
-                        INSERT INTO cards (card_key, project_id, plan_code, remark, expires_at, renewed_from)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        RETURNING *
-                        """,
-                        (new_key, project["id"], old["plan_code"], old["remark"],
-                         old["expires_at"], card_key),
-                    )
-                    new_card = dict(cur.fetchone())
-                    cur.execute("RELEASE SAVEPOINT sp_insert")
-                    break
-                except Exception as e:
-                    cur.execute("ROLLBACK TO SAVEPOINT sp_insert")
-                    if "unique" not in str(e).lower() or attempt == 4:
-                        raise
-    return {"old_card_key": card_key, "card": _card_to_dict(new_card)}

@@ -9,9 +9,10 @@ class ProjectCreate(BaseModel):
     callback_url: Optional[str] = None
 
 
-class CardGenerateRequest(BaseModel):
-    count: int = Field(default=1, ge=1, le=100)
-    days: int = Field(default=30, ge=1)
+class CardCreateRequest(BaseModel):
+    # card_key 即客户的交易账号：纯数字，4~32 位
+    card_key: str = Field(pattern=r"^\d{4,32}$")
+    days: int = Field(ge=1)
     plan_code: str = ""
     remark: str = ""
 
@@ -21,8 +22,10 @@ class CardRenewRequest(BaseModel):
 
 
 # 状态机动作：suspend(active→suspended) / resume(suspended→active) / revoke(任意→revoked)
+# reset(任意状态含 revoked → active，不动 expires_at，用于误吊销恢复)
+# action 可省略：只改备注不变状态（action 与 remark 至少给一个）
 class CardPatchRequest(BaseModel):
-    action: str = Field(pattern="^(suspend|resume|revoke)$")
+    action: Optional[str] = Field(default=None, pattern="^(suspend|resume|revoke|reset)$")
     remark: Optional[str] = None
 
 

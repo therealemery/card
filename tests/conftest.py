@@ -84,15 +84,15 @@ def project(api):
 
 @pytest.fixture
 def project_with_card(project, api):
-    """常用组合：项目 + 一张 30 天卡，返回 (project, card)"""
+    """常用组合：项目 + 一个 30 天授权的账号，返回 (project, card)"""
     proj = project()
     r = api.post(
         "/api/cards",
-        json={"count": 1, "days": 30, "plan_code": "pro", "remark": "测试卡"},
+        json={"card_key": "88801234", "days": 30, "plan_code": "pro", "remark": "测试客户"},
         headers={"X-Admin-Key": proj["admin_key"]},
     )
     assert r.status_code == 200, r.text
-    return proj, r.json()["cards"][0]
+    return proj, r.json()["card"]
 
 
 def admin_headers(project):

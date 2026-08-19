@@ -52,9 +52,11 @@ def test_resolve_not_found(api, project):
 
 
 def test_resolve_cross_project_invisible(api, project):
-    """别项目的卡对本项目 resolve 而言视同不存在"""
+    """别项目的账号对本项目 resolve 而言视同不存在"""
     p1, p2 = project(name="r1"), project(name="r2")
-    card = api.post("/api/cards", json={}, headers=admin_headers(p1)).json()["cards"][0]
+    card = api.post(
+        "/api/cards", json={"card_key": "66601234", "days": 30}, headers=admin_headers(p1)
+    ).json()["card"]
     body = _resolve(api, p2, card["card_key"]).json()
     assert body == {"valid": False, "reason": "not_found"}
 
