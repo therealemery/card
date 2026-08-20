@@ -23,13 +23,17 @@ def create_project(body: ProjectCreate):
     resolve_token = secrets.token_hex(32)
     try:
         with get_db() as conn:
-            row = conn.execute(
+            # 不用 RETURNING（SQLite < 3.35 不支持），插入后按 lastrowid 回查
+            cur = conn.execute(
                 """
                 INSERT INTO projects (name, resolve_token, callback_url, created_at)
                 VALUES (?, ?, ?, ?)
-                RETURNING id, name, resolve_token, callback_url, created_at
                 """,
                 (body.name, resolve_token, body.callback_url, utcnow_iso()),
+            )
+            row = conn.execute(
+                "SELECT id, name, resolve_token, callback_url, created_at FROM projects WHERE id = ?",
+                (cur.lastrowid,),
             ).fetchone()
     except sqlite3.IntegrityError as e:
         # name 唯一约束冲突

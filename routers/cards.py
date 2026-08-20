@@ -67,13 +67,16 @@ def create_card(body: CardCreateRequest, project: dict = Depends(get_project_by_
         ).fetchone()
         if exists:
             raise HTTPException(status_code=409, detail="该交易账号已存在授权")
-        row = conn.execute(
+        conn.execute(
             """
             INSERT INTO cards (card_key, project_id, remark, expires_at, created_at)
             VALUES (?, ?, ?, ?, ?)
-            RETURNING *
             """,
             (body.card_key, project["id"], body.remark, expires_at, utcnow_iso()),
+        )
+        # 不用 RETURNING（SQLite < 3.35 不支持），插入后回查
+        row = conn.execute(
+            "SELECT * FROM cards WHERE card_key = ?", (body.card_key,)
         ).fetchone()
     return {"card": _card_to_dict(dict(row))}
 
@@ -154,8 +157,12 @@ def patch_card(card_key: str, body: CardPatchRequest, project: dict = Depends(ge
             params.append(body.remark)
 
         params.append(card_key)
-        row = conn.execute(
-            f"UPDATE cards SET {', '.join(sets)} WHERE card_key = ? RETURNING *",
+        # 不用 RETURNING（SQLite < 3.35 不支持），更新后回查
+        conn.execute(
+            f"UPDATE cards SET {', '.join(sets)} WHERE card_key = ?",
             params,
+        )
+        row = conn.execute(
+            "SELECT * FROM cards WHERE card_key = ?", (card_key,)
         ).fetchone()
     return {"card": _card_to_dict(dict(row))}
