@@ -237,9 +237,11 @@
 "use strict";
 
 // ---------- 状态 ----------
+// token 存 sessionStorage：刷新页面保留，关闭标签页/浏览器后需重新登录
 const LS_TOKEN = "cardlink_token";
-let authToken = localStorage.getItem(LS_TOKEN) || "";
-let currentProjectId = null;   // 授权管理视图当前选中的项目
+const LS_PROJECT = "cardlink_project";   // 当前项目持久化，刷新后保持选中
+let authToken = sessionStorage.getItem(LS_TOKEN) || "";
+let currentProjectId = parseInt(localStorage.getItem(LS_PROJECT), 10) || null;   // 授权管理视图当前选中的项目
 let allCards = [];             // 最近一次加载的完整列表，搜索框做前端过滤
 
 const $ = (id) => document.getElementById(id);
@@ -349,7 +351,7 @@ async function login() {
   try {
     const data = await api("/api/auth/login", { method: "POST", body: { username, password } });
     authToken = data.token;
-    localStorage.setItem(LS_TOKEN, authToken);
+    sessionStorage.setItem(LS_TOKEN, authToken);
     $("input-password").value = "";
     enterMain();
     toast("登录成功", "ok");
@@ -363,8 +365,9 @@ async function logout(silent) {
     try { await api("/api/auth/logout", { method: "POST" }); } catch (e) { /* 忽略 */ }
   }
   authToken = "";
-  localStorage.removeItem(LS_TOKEN);
+  sessionStorage.removeItem(LS_TOKEN);
   currentProjectId = null;
+  localStorage.removeItem(LS_PROJECT);
   showView("login");
 }
 
@@ -403,12 +406,14 @@ async function loadProjects() {
     renderProjectList(data.projects);
     if (data.projects.length === 0) {
       currentProjectId = null;
+      localStorage.removeItem(LS_PROJECT);
       $("cards-area").classList.add("hidden");
       return;
     }
-    // 保持原选择，否则默认第一个
+    // 保持原选择（含刷新后从 localStorage 恢复的），否则默认第一个
     const stillThere = data.projects.some((p) => p.id === prev);
     currentProjectId = stillThere ? prev : data.projects[0].id;
+    localStorage.setItem(LS_PROJECT, currentProjectId);
     sel.value = currentProjectId;
     $("cards-area").classList.remove("hidden");
   } catch (e) {
@@ -766,6 +771,7 @@ $("tab-cards").onclick = () => switchTab("cards");
 $("tab-projects").onclick = () => switchTab("projects");
 $("project-select").onchange = (e) => {
   currentProjectId = parseInt(e.target.value, 10);
+  localStorage.setItem(LS_PROJECT, currentProjectId);
   loadCards();
 };
 $("btn-generate").onclick = createCard;
